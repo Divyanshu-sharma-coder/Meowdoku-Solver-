@@ -1,0 +1,19 @@
+{
+  "packages": [
+{
+  "SPDXID" : "SPDXRef-resource-0",
+  "checksums" : 
+  [
+    {
+      "algorithm" : "SHA512",
+      "checksumValue" : "680b97652a51846e1965e70b5498f74ebf9e6eaa31c122546ba7b8eff9fa6b6eb85972802970e94cce4f539518ad421395eaffe121bce7ad7b8f23a9ab9731ef"
+    }
+  ],
+  "copyrightText" : "NOASSERTION",
+  "downloadLocation" : "git+https://github.com/libjpeg-turbo/libjpeg-turbo@3.2.1",
+  "licenseConcluded" : "NOASSERTION",
+  "licenseDeclared" : "NOASSERTION",
+  "name" : "libjpeg-turbo/libjpeg-turbo"
+}
+  ]
+}
