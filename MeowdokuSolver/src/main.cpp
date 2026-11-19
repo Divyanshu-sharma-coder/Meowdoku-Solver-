@@ -2,6 +2,7 @@
 #include <algorithm>
 #include <string>
 #include <vector>
+#include <fstream>
 
 #include <opencv2/opencv.hpp>
 
@@ -39,6 +40,11 @@ int main(int argc, char* argv[])
               << screenshot.rows << "\n";
 
 
+
+    // Full-screen coordinate offset.
+// Grid coordinates are measured inside the cropped puzzle.
+    int cropOffsetX = 0;
+    int cropOffsetY = 0;
     // ========================================
     // PHASE 0: AUTOMATIC PHONE SCREEN CROPPING
     // ========================================
@@ -63,7 +69,8 @@ int main(int argc, char* argv[])
         int cropY = static_cast<int>(
             screenshot.rows * cropTopRatio
         );
-
+        cropOffsetX = cropX;
+        cropOffsetY = cropY;
         int cropWidth = screenshot.cols;
 
         int cropHeight = static_cast<int>(
@@ -286,6 +293,80 @@ int main(int argc, char* argv[])
 
         std::cout << "=======================================\n";
     }
+
+    // ========================================
+// PHASE 7: ANDROID TAP COORDINATE EXPORT
+// ========================================
+
+if (solution.solved)
+{
+    std::cout << "\n[AUTOPILOT] Generating Android tap coordinates...\n";
+
+    std::ofstream output(
+        "assets/screenshots/solution_taps.json"
+    );
+
+    if (!output.is_open())
+    {
+        std::cerr << "[AUTOPILOT] Could not create coordinate file.\n";
+        return 1;
+    }
+
+    output << "{\n";
+    output << "  \"taps\": [\n";
+
+    bool first = true;
+    int tapCount = 0;
+
+    for (const auto& position : solution.solution)
+    {
+        // Skip cats that are already present.
+        bool alreadyPlaced = false;
+
+        for (const auto& existing : existingCats)
+        {
+            if (existing.row == position.row &&
+                existing.column == position.column)
+            {
+                alreadyPlaced = true;
+                break;
+            }
+        }
+
+        if (alreadyPlaced)
+            continue;
+
+        cv::Point2f center =
+            detection.cellCenters[position.row][position.column];
+
+        int screenX = cvRound(center.x) + cropOffsetX;
+        int screenY = cvRound(center.y) + cropOffsetY;
+
+        if (!first)
+            output << ",\n";
+
+        output << "    {\n";
+        output << "      \"row\": " << position.row + 1 << ",\n";
+        output << "      \"column\": " << position.column + 1 << ",\n";
+        output << "      \"x\": " << screenX << ",\n";
+        output << "      \"y\": " << screenY << "\n";
+        output << "    }";
+
+        first = false;
+        tapCount++;
+    }
+
+    output << "\n  ]\n";
+    output << "}\n";
+
+    output.close();
+
+    std::cout << "[AUTOPILOT] Coordinates generated!\n";
+    std::cout << "[AUTOPILOT] Cats requiring placement: "
+              << tapCount << "\n";
+    std::cout << "[AUTOPILOT] Saved: "
+              << "assets/screenshots/solution_taps.json\n";
+}
 
 
     // ========================================
