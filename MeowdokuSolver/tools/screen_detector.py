@@ -208,18 +208,26 @@ def classify_screen(normalized, menu_context=False, expected_state=None):
         return "GOLDEN_FISH"
 
     known_level_phrases = [
-        "puzzle pro",
-        "single slip-up",
-        "not a single slip",
-        "swift and flawless victory",
-        "superhard level",
-        "superhard",
-        "brilliant mind",
-        "spectacular",
-        "difficulty",
-        "slip up",
-        "perfect"
-    ]
+    "puzzle pro",
+    "super hard",
+    "precision logic",
+    "zero mistakes",
+    "a precision logic with absolutely zero mistakes",
+    "single slip-up",
+    "not a single slip",
+    "swift and flawless victory",
+    "superhard level",
+    "superhard",
+    "brilliant mind",
+    "spectacular",
+    "difficulty",
+    "slip up",
+    "perfect",
+    "spot on",
+    "wrong mark",
+    "well done",
+    "bevel",
+]
 
     if any(phrase in normalized for phrase in known_level_phrases):
         return "LEVEL_SELECT"
