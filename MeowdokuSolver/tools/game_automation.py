@@ -1,6 +1,7 @@
 import argparse
 import json
 import os
+import shutil
 import subprocess
 import sys
 import time
@@ -33,6 +34,7 @@ PLACE_SCRIPT = ROOT / "tools" / "place_solution.py"
 
 PHONE_SCREEN = SCREENSHOTS / "phone_fullscreen.png"
 SOLUTION_FILE = SCREENSHOTS / "solution_taps.json"
+DEBUG_DIR = SCREENSHOTS / "unknown"
 
 OPENCV_BIN = ROOT / "vcpkg_installed" / "x64-windows" / "bin"
 
@@ -46,6 +48,14 @@ BUTTONS = {
 
 REFERENCE_WIDTH = 1080
 REFERENCE_HEIGHT = 2412
+
+# How many times in a row an unrecognised screen may be
+# "advanced" through its orange button before giving up.
+MAX_UNKNOWN_ADVANCES = 3
+
+# How many times an unrecognised screen is re-captured
+# (animations, transitions) before giving up.
+MAX_UNKNOWN_RETRIES = 2
 
 
 # ============================================================
@@ -89,17 +99,31 @@ def get_state(result):
     return "UNKNOWN"
 
 
+def get_orange_button(result):
+
+    if isinstance(result, dict):
+        button = result.get("orange_button")
+
+        if button:
+            return button
+
+    return None
+
+
 # ============================================================
 # SCREEN CAPTURE AND DETECTION
 # ============================================================
 
-def capture():
+def capture(menu_context=False):
 
     from screen_detector import capture_screen, detect_screen
 
     screenshot = capture_screen()
 
-    result = detect_screen(screenshot)
+    result = detect_screen(
+        screenshot,
+        menu_context=menu_context
+    )
 
     if not isinstance(result, dict):
         raise RuntimeError("Screen detector returned an invalid result.")
@@ -108,10 +132,56 @@ def capture():
 
 
 # ============================================================
+# GENERIC "WAIT UNTIL THE SCREEN BECOMES X"
+# ============================================================
+
+def wait_until(condition, timeout=25, interval=2, stable=2):
+    """
+    Captures the screen repeatedly until condition(result) is
+    True `stable` times in a row (this skips animation frames).
+    Returns the last result, or None on timeout.
+    """
+
+    start = time.time()
+
+    hits = 0
+
+    while time.time() - start < timeout:
+
+        time.sleep(interval)
+
+        result = capture()
+
+        log(f"Screen after tap: {get_state(result)}")
+
+        if condition(result):
+
+            hits += 1
+
+            if hits >= stable:
+                return result
+
+        else:
+
+            hits = 0
+
+    return None
+
+
+# ============================================================
 # ANDROID DEVICE RESOLUTION
 # ============================================================
 
+_DEVICE_SIZE = None
+
+
 def get_device_size():
+
+    global _DEVICE_SIZE
+
+    # The size never changes during a run, so ask ADB once.
+    if _DEVICE_SIZE is not None:
+        return _DEVICE_SIZE
 
     result = run_command(
         ["adb", "shell", "wm", "size"],
@@ -131,7 +201,9 @@ def get_device_size():
     if not matches:
         raise RuntimeError("Could not determine Android resolution.")
 
-    return tuple(map(int, matches[-1]))
+    _DEVICE_SIZE = tuple(map(int, matches[-1]))
+
+    return _DEVICE_SIZE
 
 
 # ============================================================
@@ -181,39 +253,6 @@ def tap_screen(x, y, screenshot_width, screenshot_height):
 
     log("Tap delay completed.")
 
-# ============================================================
-# WAIT FOR SCREEN TRANSITION
-# ============================================================
-
-def wait_for_change(previous_state, timeout=20):
-
-    log(f"Verifying transition from {previous_state}...")
-
-    start = time.time()
-
-    while time.time() - start < timeout:
-
-        time.sleep(2)
-
-        result = capture()
-
-        current_state = get_state(result)
-
-        print(f"[TRANSITION] Current state: {current_state}")
-
-        if current_state != previous_state:
-
-            log(
-                f"Screen transition confirmed: "
-                f"{previous_state} -> {current_state}"
-            )
-
-            return result
-
-    log("Screen transition could not be confirmed.")
-
-    return None
-
 
 # ============================================================
 # MENU HANDLING
@@ -237,43 +276,101 @@ def handle_menu(screen_result):
     log(f"Detected: {state}")
     log(f"Original button coordinates: ({x}, {y})")
 
-    # Execute tap and mandatory delay.
     tap_screen(x, y, width, height)
 
-    # Capture the screen AFTER tapping.
-    log("Checking the screen after the tap...")
+    # The screen that follows a tap may be ANYTHING: another
+    # menu, a result screen whose text OCR cannot read, or the
+    # puzzle itself.  So the only thing verified here is that
+    # the screen is no longer the one that was tapped.
+    # The main loop decides what the new screen is.
 
-    result = capture()
+    log("Waiting for the screen to change...")
 
-    new_state = get_state(result)
+    result = wait_until(
+        lambda r: get_state(r) != state,
+        timeout=25
+    )
 
-    log(f"Screen after tap: {new_state}")
-
-    if new_state == state:
-
-        log("The screen has not changed yet.")
-
-        log("Waiting for another 5 seconds...")
-
-        time.sleep(5)
-
-        result = capture()
-
-        new_state = get_state(result)
-
-        log(f"Screen after additional wait: {new_state}")
-
-    if new_state == state:
-
-        log("WARNING: Menu is still visible.")
-
-        log("Not sending another tap automatically.")
-
+    if result is None:
+        log("Could not verify the expected screen transition.")
         return None
 
-    log(f"Transition confirmed: {state} -> {new_state}")
+    log(
+        f"Transition confirmed: "
+        f"{state} -> {get_state(result)}"
+    )
 
     return result
+
+
+# ============================================================
+# UNRECOGNISED SCREEN: TAP THE ORANGE BUTTON
+# ============================================================
+
+def advance_unknown_screen(screen_result):
+    """
+    Used only after the puzzle solver has already rejected the
+    screen.  If the screen has a big orange button, tap it.
+    """
+
+    button = get_orange_button(screen_result)
+
+    if button is None:
+        return None
+
+    x, y = button
+
+    width = screen_result.get("width", 1080)
+    height = screen_result.get("height", 2412)
+
+    log(
+        f"Unrecognised screen has an orange button at ({x}, {y}). "
+        f"Tapping it."
+    )
+
+    tap_screen(x, y, width, height)
+
+    def moved_on(result):
+
+        if get_state(result) != "UNKNOWN":
+            return True
+
+        new_button = get_orange_button(result)
+
+        # Button disappeared -> new screen.
+        if new_button is None:
+            return True
+
+        # Button jumped somewhere else -> new screen.
+        return abs(new_button[1] - y) > 120
+
+    result = wait_until(moved_on, timeout=25)
+
+    if result is None:
+        log("The orange button did not lead to a new screen.")
+
+    return result
+
+
+# ============================================================
+# DEBUG SCREENSHOT
+# ============================================================
+
+def save_debug_screenshot():
+
+    try:
+
+        DEBUG_DIR.mkdir(parents=True, exist_ok=True)
+
+        destination = DEBUG_DIR / f"unknown_{int(time.time())}.png"
+
+        shutil.copy(PHONE_SCREEN, destination)
+
+        log(f"Saved the unrecognised screen to: {destination}")
+
+    except OSError as error:
+
+        log(f"Could not save the debug screenshot: {error}")
 
 
 # ============================================================
@@ -307,8 +404,6 @@ def solve_current_puzzle():
         timeout=120,
         env=environment
     )
-    print("Waited for 3 seconds")
-    time.sleep(3)
 
     print(result.stdout)
 
@@ -428,11 +523,15 @@ def wait_for_result(timeout=90):
 
         state = get_state(result)
 
-        if state in recognized_states:
+        # A recognised menu state, OR an unrecognised screen that
+        # carries the big orange button, both mean "level finished".
+        if state in recognized_states or get_orange_button(result):
 
             log(f"Puzzle transition detected: {state}")
 
             return result
+
+    log("No completion screen detected within timeout.")
 
     return None
 
@@ -504,6 +603,9 @@ def main():
     # a verified navigation transition.
     pending_result = None
 
+    unknown_retries = 0
+    unknown_advances = 0
+
     while completed_levels < args.max_levels:
 
         log("Capturing current game screen...")
@@ -527,6 +629,8 @@ def main():
         # ----------------------------------------------------
 
         if state in BUTTONS:
+
+            unknown_retries = 0
 
             next_screen = handle_menu(result)
 
@@ -554,34 +658,82 @@ def main():
 
             solved = solve_current_puzzle()
 
-            if not solved:
+            if solved:
 
-                log("Could not confirm a valid playable puzzle.")
+                unknown_retries = 0
+                unknown_advances = 0
 
-                log("Stopping safely instead of tapping blindly.")
+                completed_levels += 1
 
-                break
+                log(
+                    f"Placement sequence completed. "
+                    f"Progress: {completed_levels}/{args.max_levels}"
+                )
 
-            completed_levels += 1
+                next_screen = wait_for_result()
 
-            log(
-                f"Placement sequence completed. "
-                f"Progress: {completed_levels}/{args.max_levels}"
-            )
+                if next_screen is None:
 
-            next_screen = wait_for_result()
+                    log("No recognized completion screen appeared.")
 
-            if next_screen is None:
+                    log("Stopping safely.")
 
-                log("No recognized completion screen appeared.")
+                    break
 
-                log("Stopping safely.")
+                pending_result = next_screen
 
-                break
+                continue
 
-            pending_result = next_screen
+            # ------------------------------------------------
+            # NOT A PUZZLE.  Probably a result/menu screen whose
+            # text OCR could not read (the praise line changes).
+            # ------------------------------------------------
 
-            continue
+            if (
+                get_orange_button(result)
+                and unknown_advances < MAX_UNKNOWN_ADVANCES
+            ):
+
+                unknown_advances += 1
+
+                next_screen = advance_unknown_screen(result)
+
+                if next_screen is None:
+
+                    save_debug_screenshot()
+
+                    log("Stopping safely.")
+
+                    break
+
+                pending_result = next_screen
+
+                continue
+
+            # ------------------------------------------------
+            # Maybe just a transition frame: look again.
+            # ------------------------------------------------
+
+            if unknown_retries < MAX_UNKNOWN_RETRIES:
+
+                unknown_retries += 1
+
+                log(
+                    f"Re-checking the screen "
+                    f"({unknown_retries}/{MAX_UNKNOWN_RETRIES})..."
+                )
+
+                time.sleep(3)
+
+                continue
+
+            log("Could not confirm a valid playable puzzle.")
+
+            save_debug_screenshot()
+
+            log("Stopping safely instead of tapping blindly.")
+
+            break
 
         # ----------------------------------------------------
         # UNRECOGNIZED STATE

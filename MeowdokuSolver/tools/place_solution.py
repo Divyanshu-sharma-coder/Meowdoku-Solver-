@@ -172,6 +172,8 @@ def main():
 
         time.sleep(args.interval)
 
+    time.sleep(8)
+
     print("\n===================================")
     print("       PLACEMENT COMPLETE")
     print("===================================")

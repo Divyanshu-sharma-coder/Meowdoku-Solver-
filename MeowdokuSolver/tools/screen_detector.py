@@ -194,8 +194,12 @@ def run_ocr(image_path):
 # SCREEN CLASSIFICATION
 # ============================================================
 
-def classify_screen(normalized, menu_context=False):
+def classify_screen(normalized, menu_context=False, expected_state=None):
+    """Classify a screen using tolerant OCR rules and caller context."""
+
     normalized = (normalized or "").lower()
+    normalized = re.sub(r"[^a-z0-9]+", " ", normalized)
+    normalized = re.sub(r"\s+", " ", normalized).strip()
 
     if "leaderboard" in normalized:
         return "LEADERBOARD"
@@ -208,10 +212,21 @@ def classify_screen(normalized, menu_context=False):
         "single slip-up",
         "not a single slip",
         "swift and flawless victory",
-        "superhard level"
+        "superhard level",
+        "superhard",
+        "brilliant mind",
+        "spectacular",
+        "difficulty",
+        "slip up",
+        "perfect"
     ]
 
     if any(phrase in normalized for phrase in known_level_phrases):
+        return "LEVEL_SELECT"
+
+    # A leaderboard transition has one known destination. This prevents a
+    # newly changed or poorly recognized level message from becoming UNKNOWN.
+    if expected_state == "LEVEL_SELECT":
         return "LEVEL_SELECT"
 
     # Only apply this fallback when we KNOW we are on a menu.
@@ -223,7 +238,7 @@ def classify_screen(normalized, menu_context=False):
 # MAIN SCREEN DETECTOR
 # ============================================================
 
-def detect_screen(image_path, menu_context=False):
+def detect_screen(image_path, menu_context=False, expected_state=None):
 
     if not os.path.exists(image_path):
 
@@ -237,7 +252,11 @@ def detect_screen(image_path, menu_context=False):
         (text or "").split()
     )
 
-    state = classify_screen(normalized, menu_context)
+    state = classify_screen(
+        normalized,
+        menu_context=menu_context,
+        expected_state=expected_state,
+    )
 
     button = BUTTONS.get(state)
 
