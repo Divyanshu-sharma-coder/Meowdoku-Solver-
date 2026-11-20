@@ -1,170 +1,170 @@
 ```bat
 @echo off
 setlocal EnableExtensions
-
-title Meowdoku Solver - Auto Capture and Solve
-
-REM ==========================================
-REM MEOWDOKU AUTOMATION
-REM ==========================================
+title MEOWDOKU AUTOPILOT
 
 cd /d "%~dp0"
 
 set "ROOT=%CD%"
 set "SCREENSHOT_DIR=%ROOT%\assets\screenshots"
-set "CAPTURE_SCRIPT=%ROOT%\tools\capture.py"
 set "PYTHON=%ROOT%\.venv\bin\python.exe"
+set "CONTROLLER=%ROOT%\tools\game_automation.py"
+set "CAPTURE_SCRIPT=%ROOT%\tools\capture.py"
+set "PLACE_SCRIPT=%ROOT%\tools\place_solution.py"
+set "SCREEN_DETECTOR=%ROOT%\tools\screen_detector.py"
 set "SOLVER=%ROOT%\build\Release\MeowdokuSolver.exe"
 set "OPENCV_BIN=%ROOT%\vcpkg_installed\x64-windows\bin"
 
 echo.
 echo ==========================================
-echo       MEOWDOKU SOLVER AUTOMATION
+echo          MEOWDOKU AUTOPILOT
 echo ==========================================
 echo.
 
-REM ==========================================
-REM STEP 1: CHECK REQUIRED FILES
-REM ==========================================
-
-echo [1/5] Checking project files...
+echo [1/7] Checking project directories...
 
 if not exist "%SCREENSHOT_DIR%\" goto ERROR_SCREENSHOT_DIR
-if not exist "%CAPTURE_SCRIPT%" goto ERROR_CAPTURE
+if not exist "%ROOT%\tools\" goto ERROR_TOOLS_DIR
+if not exist "%ROOT%\build\Release\" goto ERROR_BUILD_DIR
+
+echo [2/7] Checking Python environment...
+
 if not exist "%PYTHON%" goto ERROR_PYTHON
+
+"%PYTHON%" --version
+if errorlevel 1 goto ERROR_PYTHON
+
+echo [3/7] Checking automation scripts...
+
+if not exist "%CONTROLLER%" goto ERROR_CONTROLLER
+if not exist "%CAPTURE_SCRIPT%" goto ERROR_CAPTURE
+if not exist "%PLACE_SCRIPT%" goto ERROR_PLACE
+if not exist "%SCREEN_DETECTOR%" goto ERROR_DETECTOR
+
+echo [4/7] Checking C++ solver...
+
 if not exist "%SOLVER%" goto ERROR_SOLVER
+
+echo [5/7] Checking ADB installation...
 
 where adb >nul 2>&1
 if errorlevel 1 goto ERROR_ADB
 
-REM ==========================================
-REM STEP 2: CHECK ANDROID CONNECTION
-REM ==========================================
+adb version
 
-echo.
-echo [2/5] Checking Android connection...
+echo [6/7] Checking Android connection...
 
 adb get-state >nul 2>&1
 if errorlevel 1 goto ERROR_DEVICE
 
-echo [ADB] Android device connected!
+echo.
+echo [ADB] Android device connected successfully!
 
-REM ==========================================
-REM STEP 3: CLEAN OLD GENERATED IMAGES
-REM ==========================================
+adb shell wm size
 
 echo.
-echo [3/5] Cleaning previous screenshots...
+echo [7/7] Preparing autopilot environment...
 
-for %%E in (png jpg jpeg bmp webp) do (
-    del /q "%SCREENSHOT_DIR%\*.%%E" 2>nul
-)
+if not exist "%OPENCV_BIN%\" goto ERROR_OPENCV
 
-echo [CLEAN] Old screenshot images removed!
-
-REM ==========================================
-REM STEP 4: CAPTURE PHONE SCREEN
-REM ==========================================
+set "PATH=%OPENCV_BIN%;%PATH%"
 
 echo.
-echo [4/5] Capturing Android screen...
+echo [CLEANUP] Removing only temporary generated files...
 
-"%PYTHON%" "%CAPTURE_SCRIPT%" 1
+del /q "%SCREENSHOT_DIR%\phone_fullscreen.png" 2>nul
+del /q "%SCREENSHOT_DIR%\current_puzzle.png" 2>nul
+del /q "%SCREENSHOT_DIR%\region_detected.png" 2>nul
+del /q "%SCREENSHOT_DIR%\solution_visualized.png" 2>nul
+del /q "%SCREENSHOT_DIR%\grid_detected.png" 2>nul
+del /q "%SCREENSHOT_DIR%\solution_taps.json" 2>nul
 
-if errorlevel 1 goto ERROR_CAPTURE_RUN
-
-if not exist "%SCREENSHOT_DIR%\phone_fullscreen.png" goto ERROR_IMAGE
-
-echo [CAPTURE] Screenshot captured successfully!
-
-REM ==========================================
-REM STEP 5: RUN C++ SOLVER
-REM ==========================================
-
-echo.
-echo [5/5] Starting Meowdoku Solver...
-
-if exist "%OPENCV_BIN%\" (
-    set "PATH=%OPENCV_BIN%;%PATH%"
-)
-
-"%SOLVER%" "%SCREENSHOT_DIR%\phone_fullscreen.png"
-
-if errorlevel 1 goto ERROR_SOLVER_RUN
-
-REM ==========================================
-REM SUCCESS
-REM ==========================================
+echo [CLEANUP] Reference screenshots preserved.
 
 echo.
 echo ==========================================
-echo          PUZZLE PROCESSING COMPLETE
+echo       STARTING GAME AUTOMATION
 echo ==========================================
 echo.
+echo Maximum placement sequences: 50
+echo Controller: game_automation.py
+echo.
+echo Press CTRL+C to stop automation.
+echo.
 
-if exist "%SCREENSHOT_DIR%\solution_visualized.png" (
-    echo Opening solution image...
-    start "" "%SCREENSHOT_DIR%\solution_visualized.png"
-) else (
-    echo WARNING: Solution image was not generated.
-)
+"%PYTHON%" "%CONTROLLER%" --max-levels 50
+
+if errorlevel 1 goto ERROR_AUTOMATION
 
 echo.
-echo Move to your next level and run this BAT again!
+echo ==========================================
+echo       AUTOPILOT SESSION COMPLETE
+echo ==========================================
 echo.
+echo Automation controller exited successfully.
+echo.
+
 pause
 exit /b 0
 
-
-REM ==========================================
-REM ERROR HANDLING
-REM ==========================================
 
 :ERROR_SCREENSHOT_DIR
 echo ERROR: Screenshot directory missing.
 goto FAILED
 
-:ERROR_CAPTURE
-echo ERROR: tools\capture.py missing.
+:ERROR_TOOLS_DIR
+echo ERROR: Tools directory missing.
+goto FAILED
+
+:ERROR_BUILD_DIR
+echo ERROR: Build directory missing.
 goto FAILED
 
 :ERROR_PYTHON
-echo ERROR: Project Python executable missing.
+echo ERROR: Project Python environment unavailable.
+goto FAILED
+
+:ERROR_CONTROLLER
+echo ERROR: game_automation.py missing.
+goto FAILED
+
+:ERROR_CAPTURE
+echo ERROR: capture.py missing.
+goto FAILED
+
+:ERROR_PLACE
+echo ERROR: place_solution.py missing.
+goto FAILED
+
+:ERROR_DETECTOR
+echo ERROR: screen_detector.py missing.
 goto FAILED
 
 :ERROR_SOLVER
-echo ERROR: MeowdokuSolver.exe missing.
-echo Build using:
-echo cmake --build build --config Release --parallel 2
+echo ERROR: C++ solver executable missing.
 goto FAILED
 
 :ERROR_ADB
-echo ERROR: ADB is not installed or not in PATH.
+echo ERROR: ADB not found in PATH.
 goto FAILED
 
 :ERROR_DEVICE
-echo ERROR: Android device not connected or authorized.
-echo Run adb devices to check.
+echo ERROR: Android device disconnected or unauthorized.
 goto FAILED
 
-:ERROR_CAPTURE_RUN
-echo ERROR: Screenshot capture failed.
+:ERROR_OPENCV
+echo ERROR: OpenCV runtime directory missing.
 goto FAILED
 
-:ERROR_IMAGE
-echo ERROR: Screenshot image was not generated.
-goto FAILED
-
-:ERROR_SOLVER_RUN
-echo ERROR: C++ solver execution failed.
+:ERROR_AUTOMATION
+echo ERROR: Game automation controller failed.
 goto FAILED
 
 :FAILED
 echo.
 echo ==========================================
-echo             PROCESS FAILED
+echo          AUTOPILOT FAILED
 echo ==========================================
-echo Fix the error and try again.
 echo.
 pause
 exit /b 1
